@@ -20,7 +20,7 @@ export class GameService {
       username,
       hand: [],
       stars: 55, // Starting stars
-      ready: true, // Host is ready by default
+      ready: false, // Host does not need to be ready
       hasPlayed: false,
     };
 
@@ -45,7 +45,7 @@ export class GameService {
     const room = this.rooms.get(code.toUpperCase());
     if (!room) throw new Error('Room not found');
     if (room.status !== RoomStatus.WAITING) throw new Error('Game already started');
-    
+
     // Check if room is full
     if (Object.keys(room.players).length >= room.maxPlayers) {
       throw new Error('Room is full');
@@ -68,7 +68,7 @@ export class GameService {
       if (room.hostId === existingPlayerId) {
         room.hostId = socketId;
       }
-      
+
       // Update turn order if in middle of game
       if (room.turnOrder) {
         room.turnOrder = room.turnOrder.map(id => id === existingPlayerId ? socketId : id);
@@ -79,7 +79,7 @@ export class GameService {
       if (isNameTaken) {
         throw new Error('Username already taken in this room');
       }
-      
+
       room.players[socketId] = {
         id: socketId,
         username,
@@ -124,14 +124,14 @@ export class GameService {
     const room = this.getRoomBySocketId(socketId);
     if (!room) throw new Error('Room not found');
     if (room.hostId !== socketId) throw new Error('Only host can start');
-    
+
     const players = Object.values(room.players);
     if (players.length < 4) throw new Error('Minimum 4 players required');
-    if (players.some(p => !p.ready)) throw new Error('All players must be ready');
+    if (players.some(p => p.id !== room.hostId && !p.ready)) throw new Error('All other players must be ready');
 
     room.status = RoomStatus.PLAYING;
     room.round = 1;
-    
+
     // Initialize hands for all players
     players.forEach(player => {
       player.stars = 55; // Reset stars to 55
@@ -184,7 +184,7 @@ export class GameService {
     const timeout = setTimeout(() => {
       const roomRef = this.rooms.get(room.code);
       if (!roomRef) return;
-      
+
       const currentPlayerId = room.turnOrder[room.currentTurnIndex];
       const player = room.players[currentPlayerId];
       if (player && player.hand.length > 0) {
@@ -193,10 +193,10 @@ export class GameService {
         try {
           this.playCard(currentPlayerId, lowestCardId);
           if (this.onRoomUpdateLink) {
-             const updatedRoom = this.rooms.get(room.code);
-             if (updatedRoom) {
-                this.onRoomUpdateLink(updatedRoom, { event: 'CARD_PLAYED', data: { playerId: currentPlayerId } });
-             }
+            const updatedRoom = this.rooms.get(room.code);
+            if (updatedRoom) {
+              this.onRoomUpdateLink(updatedRoom, { event: 'CARD_PLAYED', data: { playerId: currentPlayerId } });
+            }
           }
         } catch (e) {
           console.error('Auto-play failed:', e);
@@ -210,7 +210,7 @@ export class GameService {
   playCard(socketId: string, cardId: string): Room {
     const room = this.getRoomBySocketId(socketId);
     if (!room) throw new Error('Room not found');
-    
+
     const player = room.players[socketId];
     if (room.turnOrder[room.currentTurnIndex] !== socketId) {
       throw new Error('Not your turn');
@@ -238,7 +238,7 @@ export class GameService {
   private resolveRound(room: Room) {
     const players = Object.values(room.players);
     const elementsPresent = [...new Set(players.map(p => p.playedCard!.element))];
-    
+
     // Calculate merged stars per element
     const elementTotals: Partial<Record<Element, number>> = {};
     players.forEach(p => {
@@ -292,50 +292,50 @@ export class GameService {
     const remainingElements = [...new Set(remainingPlayers.map(p => p.playedCard!.element))];
 
     if (remainingElements.length > 1) {
-        // Compare total stars of all remaining elements
-        let maxTotal = -1;
-        let winnersEls: Element[] = [];
-        remainingElements.forEach(el => {
-            const total = elementTotals[el]!;
-            if (total > maxTotal) {
-                maxTotal = total;
-                winnersEls = [el];
-            } else if (total === maxTotal) {
-                winnersEls.push(el);
-            }
-        });
-
-        // If there are losers (i.e. not everyone tied for max), apply changes
-        if (winnersEls.length < remainingElements.length) {
-            remainingPlayers.forEach(p => {
-                const el = p.playedCard!.element;
-                if (winnersEls.includes(el)) {
-                    playerChanges[p.id] += p.playedCard!.stars;
-                } else {
-                    playerChanges[p.id] -= p.playedCard!.stars;
-                }
-            });
+      // Compare total stars of all remaining elements
+      let maxTotal = -1;
+      let winnersEls: Element[] = [];
+      remainingElements.forEach(el => {
+        const total = elementTotals[el]!;
+        if (total > maxTotal) {
+          maxTotal = total;
+          winnersEls = [el];
+        } else if (total === maxTotal) {
+          winnersEls.push(el);
         }
+      });
+
+      // If there are losers (i.e. not everyone tied for max), apply changes
+      if (winnersEls.length < remainingElements.length) {
+        remainingPlayers.forEach(p => {
+          const el = p.playedCard!.element;
+          if (winnersEls.includes(el)) {
+            playerChanges[p.id] += p.playedCard!.stars;
+          } else {
+            playerChanges[p.id] -= p.playedCard!.stars;
+          }
+        });
+      }
     } else if (remainingElements.length === 1 && elementsPresent.length === 1) {
-        // Rule 5.4: All cards same element - Compare stars
-        const allPlayers = players; // Everyone is same element
-        let maxStars = -1;
-        allPlayers.forEach(p => {
-            if (p.playedCard!.stars > maxStars) maxStars = p.playedCard!.stars;
-        });
+      // Rule 5.4: All cards same element - Compare stars
+      const allPlayers = players; // Everyone is same element
+      let maxStars = -1;
+      allPlayers.forEach(p => {
+        if (p.playedCard!.stars > maxStars) maxStars = p.playedCard!.stars;
+      });
 
-        const winners = allPlayers.filter(p => p.playedCard!.stars === maxStars);
-        
-        // Only apply if there's at least one loser (not everyone tied)
-        if (winners.length < allPlayers.length) {
-            allPlayers.forEach(p => {
-                if (p.playedCard!.stars === maxStars) {
-                    playerChanges[p.id] += p.playedCard!.stars;
-                } else {
-                    playerChanges[p.id] -= p.playedCard!.stars;
-                }
-            });
-        }
+      const winners = allPlayers.filter(p => p.playedCard!.stars === maxStars);
+
+      // Only apply if there's at least one loser (not everyone tied)
+      if (winners.length < allPlayers.length) {
+        allPlayers.forEach(p => {
+          if (p.playedCard!.stars === maxStars) {
+            playerChanges[p.id] += p.playedCard!.stars;
+          } else {
+            playerChanges[p.id] -= p.playedCard!.stars;
+          }
+        });
+      }
     }
     // Rule 5.5: Players not involved in any counter (already handled by remainingElements.length === 1 check above)
 

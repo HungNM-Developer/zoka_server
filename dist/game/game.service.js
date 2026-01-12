@@ -25,7 +25,7 @@ let GameService = class GameService {
             username,
             hand: [],
             stars: 55,
-            ready: true,
+            ready: false,
             hasPlayed: false,
         };
         const room = {
@@ -116,8 +116,8 @@ let GameService = class GameService {
         const players = Object.values(room.players);
         if (players.length < 4)
             throw new Error('Minimum 4 players required');
-        if (players.some(p => !p.ready))
-            throw new Error('All players must be ready');
+        if (players.some(p => p.id !== room.hostId && !p.ready))
+            throw new Error('All other players must be ready');
         room.status = game_types_1.RoomStatus.PLAYING;
         room.round = 1;
         players.forEach(player => {
