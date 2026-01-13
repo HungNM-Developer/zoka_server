@@ -3,6 +3,7 @@ export declare class GameService {
     private rooms;
     private socketToRoom;
     private turnTimeouts;
+    private disconnectionTimeouts;
     private onRoomUpdateLink;
     setUpdateCallback(cb: (room: Room, extra?: {
         event: string;
@@ -11,6 +12,8 @@ export declare class GameService {
     createRoom(hostId: string, username: string, maxPlayers?: number): Room;
     joinRoom(socketId: string, username: string, code: string): Room;
     leaveRoom(socketId: string): string | null;
+    markDisconnected(socketId: string, graceMs?: number): string | null;
+    private cancelDisconnectionTimeout;
     toggleReady(socketId: string, ready: boolean): Room;
     startGame(socketId: string): Room;
     resetToLobby(socketId: string): Room;

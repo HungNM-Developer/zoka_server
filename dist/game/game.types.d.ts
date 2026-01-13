@@ -27,6 +27,7 @@ export interface Player {
     ready: boolean;
     playedCard?: Card;
     hasPlayed: boolean;
+    connected?: boolean;
 }
 export declare enum RoomStatus {
     WAITING = "WAITING",
