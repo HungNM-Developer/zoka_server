@@ -15,7 +15,9 @@ import { Room, RoomStatus } from './game.types';
 @WebSocketGateway({
   cors: { origin: '*' },
 })
-export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
+export class GameGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
   @WebSocketServer()
   server: Server;
 
@@ -32,9 +34,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
   private broadcastRoomUpdate(room: Room) {
     this.server.to(room.code).emit('ROOM_UPDATED', room);
-    
+
     // If game just started (First round, first turn)
-    if (room.status === RoomStatus.PLAYING && room.round === 1 && room.history.length === 0 && room.currentTurnIndex === 0) {
+    if (
+      room.status === RoomStatus.PLAYING &&
+      room.round === 1 &&
+      room.history.length === 0 &&
+      room.currentTurnIndex === 0
+    ) {
       this.server.to(room.code).emit('GAME_STARTED', room);
       this.server.to(room.code).emit('ROUND_STARTED', room);
     }
@@ -42,7 +49,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     else if (room.currentTurnIndex === 0 && room.history.length > 0) {
       const lastResult = room.history[room.history.length - 1];
       this.server.to(room.code).emit('ROUND_RESULT', lastResult);
-      
+
       if (room.status === RoomStatus.FINISHED) {
         this.server.to(room.code).emit('GAME_ENDED', room);
       } else {
@@ -57,15 +64,22 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
   handleDisconnect(client: Socket) {
     console.log(`Client disconnected: ${client.id}`);
-    const code = this.gameService.leaveRoom(client.id);
+    // Instead of removing the player immediately, mark disconnected and start grace period
+    const code = this.gameService.markDisconnected(client.id);
     if (code) {
-      this.server.to(code).emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
+      // inform room that player is disconnected (player.connected=false)
+      this.server
+        .to(code)
+        .emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
       this.broadcastRoomList();
     }
   }
 
   @SubscribeMessage('ENTER_USERNAME')
-  handleEnterUsername(@ConnectedSocket() client: Socket, @MessageBody() data: { username: string }) {
+  handleEnterUsername(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { username: string },
+  ) {
     // Just acknowledge or store locally if needed. For now, we use it when joining/creating rooms.
     return { success: true };
   }
@@ -76,8 +90,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   }
 
   @SubscribeMessage('CREATE_ROOM')
-  handleCreateRoom(@ConnectedSocket() client: Socket, @MessageBody() data: { username: string; maxPlayers: number }) {
-    const room = this.gameService.createRoom(client.id, data.username, data.maxPlayers);
+  handleCreateRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { username: string; maxPlayers: number },
+  ) {
+    const room = this.gameService.createRoom(
+      client.id,
+      data.username,
+      data.maxPlayers,
+    );
     client.join(room.code);
     this.broadcastRoomList();
     return room;
@@ -89,7 +110,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     @MessageBody() data: { username: string; code: string },
   ) {
     try {
-      const room = this.gameService.joinRoom(client.id, data.username, data.code);
+      const room = this.gameService.joinRoom(
+        client.id,
+        data.username,
+        data.code,
+      );
       client.join(room.code);
       this.server.to(room.code).emit('ROOM_UPDATED', room);
       this.broadcastRoomList();
@@ -100,7 +125,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   }
 
   @SubscribeMessage('READY')
-  handleReady(@ConnectedSocket() client: Socket, @MessageBody() data: { ready: boolean }) {
+  handleReady(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { ready: boolean },
+  ) {
     try {
       const room = this.gameService.toggleReady(client.id, data.ready);
       this.broadcastRoomUpdate(room);
@@ -120,7 +148,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   }
 
   @SubscribeMessage('PLAY_CARD')
-  handlePlayCard(@ConnectedSocket() client: Socket, @MessageBody() data: { cardId: string }) {
+  handlePlayCard(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { cardId: string },
+  ) {
     try {
       const room = this.gameService.playCard(client.id, data.cardId);
       this.broadcastRoomUpdate(room);
@@ -136,12 +167,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     if (code) {
       client.leave(code);
       this.broadcastRoomList();
-      this.server.to(code).emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
+      this.server
+        .to(code)
+        .emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
     }
   }
 
   @SubscribeMessage('KICK_PLAYER')
-  handleKickPlayer(@ConnectedSocket() client: Socket, @MessageBody() data: { targetId: string }) {
+  handleKickPlayer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { targetId: string },
+  ) {
     try {
       const room = this.gameService.kickPlayer(client.id, data.targetId);
       this.server.to(data.targetId).emit('KICKED');

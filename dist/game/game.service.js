@@ -14,6 +14,7 @@ let GameService = class GameService {
     rooms = new Map();
     socketToRoom = new Map();
     turnTimeouts = new Map();
+    disconnectionTimeouts = new Map();
     onRoomUpdateLink;
     setUpdateCallback(cb) {
         this.onRoomUpdateLink = cb;
@@ -27,6 +28,7 @@ let GameService = class GameService {
             stars: 55,
             ready: true,
             hasPlayed: false,
+            connected: true,
         };
         const room = {
             code,
@@ -47,27 +49,30 @@ let GameService = class GameService {
         const room = this.rooms.get(code.toUpperCase());
         if (!room)
             throw new Error('Room not found');
-        if (room.status !== game_types_1.RoomStatus.WAITING)
-            throw new Error('Game already started');
         if (Object.keys(room.players).length >= room.maxPlayers) {
             throw new Error('Room is full');
         }
         const existingPlayerId = Object.keys(room.players).find((id) => room.players[id].username === username);
+        if (!existingPlayerId && room.status !== game_types_1.RoomStatus.WAITING) {
+            throw new Error('Game already started');
+        }
         if (existingPlayerId) {
             const playerData = room.players[existingPlayerId];
             delete room.players[existingPlayerId];
             room.players[socketId] = { ...playerData, id: socketId };
+            this.cancelDisconnectionTimeout(existingPlayerId);
             this.socketToRoom.delete(existingPlayerId);
             this.socketToRoom.set(socketId, code);
+            room.players[socketId].connected = true;
             if (room.hostId === existingPlayerId) {
                 room.hostId = socketId;
             }
             if (room.turnOrder) {
-                room.turnOrder = room.turnOrder.map(id => id === existingPlayerId ? socketId : id);
+                room.turnOrder = room.turnOrder.map((id) => id === existingPlayerId ? socketId : id);
             }
         }
         else {
-            const isNameTaken = Object.values(room.players).some(p => p.username.toLowerCase() === username.toLowerCase());
+            const isNameTaken = Object.values(room.players).some((p) => p.username.toLowerCase() === username.toLowerCase());
             if (isNameTaken) {
                 throw new Error('Username already taken in this room');
             }
@@ -78,6 +83,7 @@ let GameService = class GameService {
                 stars: 55,
                 ready: false,
                 hasPlayed: false,
+                connected: true,
             };
             this.socketToRoom.set(socketId, code);
         }
@@ -89,6 +95,7 @@ let GameService = class GameService {
             return null;
         const room = this.rooms.get(code);
         if (room) {
+            this.cancelDisconnectionTimeout(socketId);
             delete room.players[socketId];
             this.socketToRoom.delete(socketId);
             if (Object.keys(room.players).length === 0) {
@@ -99,6 +106,28 @@ let GameService = class GameService {
             }
         }
         return code;
+    }
+    markDisconnected(socketId, graceMs = 60000) {
+        const code = this.socketToRoom.get(socketId);
+        if (!code)
+            return null;
+        const room = this.rooms.get(code);
+        if (!room)
+            return null;
+        const player = room.players[socketId];
+        if (!player)
+            return null;
+        player.connected = false;
+        if (this.onRoomUpdateLink) {
+            this.onRoomUpdateLink(room);
+        }
+        return code;
+    }
+    cancelDisconnectionTimeout(socketId) {
+        if (this.disconnectionTimeouts.has(socketId)) {
+            clearTimeout(this.disconnectionTimeouts.get(socketId));
+            this.disconnectionTimeouts.delete(socketId);
+        }
     }
     toggleReady(socketId, ready) {
         const room = this.getRoomBySocketId(socketId);
@@ -116,11 +145,11 @@ let GameService = class GameService {
         const players = Object.values(room.players);
         if (players.length < 4)
             throw new Error('Minimum 4 players required');
-        if (players.some(p => !p.ready))
+        if (players.some((p) => !p.ready))
             throw new Error('All players must be ready');
         room.status = game_types_1.RoomStatus.PLAYING;
         room.round = 1;
-        players.forEach(player => {
+        players.forEach((player) => {
             player.stars = 55;
             player.hand = Array.from({ length: 10 }, (_, i) => ({
                 id: (0, uuid_1.v4)(),
@@ -142,7 +171,7 @@ let GameService = class GameService {
         room.status = game_types_1.RoomStatus.WAITING;
         room.round = 0;
         room.history = [];
-        Object.values(room.players).forEach(p => {
+        Object.values(room.players).forEach((p) => {
             p.ready = false;
             p.hasPlayed = false;
             p.playedCard = undefined;
@@ -153,7 +182,7 @@ let GameService = class GameService {
     startRound(room) {
         room.turnOrder = this.shuffle(Object.keys(room.players));
         room.currentTurnIndex = 0;
-        Object.values(room.players).forEach(p => {
+        Object.values(room.players).forEach((p) => {
             p.hasPlayed = false;
             p.playedCard = undefined;
         });
@@ -177,7 +206,10 @@ let GameService = class GameService {
                     if (this.onRoomUpdateLink) {
                         const updatedRoom = this.rooms.get(room.code);
                         if (updatedRoom) {
-                            this.onRoomUpdateLink(updatedRoom, { event: 'CARD_PLAYED', data: { playerId: currentPlayerId } });
+                            this.onRoomUpdateLink(updatedRoom, {
+                                event: 'CARD_PLAYED',
+                                data: { playerId: currentPlayerId },
+                            });
                         }
                     }
                 }
@@ -196,7 +228,7 @@ let GameService = class GameService {
         if (room.turnOrder[room.currentTurnIndex] !== socketId) {
             throw new Error('Not your turn');
         }
-        const cardIndex = player.hand.findIndex(c => c.id === cardId);
+        const cardIndex = player.hand.findIndex((c) => c.id === cardId);
         if (cardIndex === -1)
             throw new Error('Card not found');
         player.playedCard = player.hand.splice(cardIndex, 1)[0];
@@ -215,14 +247,16 @@ let GameService = class GameService {
     }
     resolveRound(room) {
         const players = Object.values(room.players);
-        const elementsPresent = [...new Set(players.map(p => p.playedCard.element))];
+        const elementsPresent = [
+            ...new Set(players.map((p) => p.playedCard.element)),
+        ];
         const elementTotals = {};
-        players.forEach(p => {
+        players.forEach((p) => {
             const el = p.playedCard.element;
             elementTotals[el] = (elementTotals[el] || 0) + p.playedCard.stars;
         });
         const playerChanges = {};
-        players.forEach(p => playerChanges[p.id] = 0);
+        players.forEach((p) => (playerChanges[p.id] = 0));
         const counterChain = {
             [game_types_1.Element.FIRE]: game_types_1.Element.ICE,
             [game_types_1.Element.ICE]: game_types_1.Element.WIND,
@@ -237,28 +271,30 @@ let GameService = class GameService {
             if (elementsPresent.includes(defenderEl)) {
                 const attackerTotal = elementTotals[attackerEl];
                 const defenderTotal = elementTotals[defenderEl];
-                const attackerPlayers = players.filter(p => p.playedCard.element === attackerEl);
-                const defenderPlayers = players.filter(p => p.playedCard.element === defenderEl);
-                attackerPlayers.forEach(p => resolvedPlayerIds.add(p.id));
-                defenderPlayers.forEach(p => resolvedPlayerIds.add(p.id));
+                const attackerPlayers = players.filter((p) => p.playedCard.element === attackerEl);
+                const defenderPlayers = players.filter((p) => p.playedCard.element === defenderEl);
+                attackerPlayers.forEach((p) => resolvedPlayerIds.add(p.id));
+                defenderPlayers.forEach((p) => resolvedPlayerIds.add(p.id));
                 if (defenderTotal > 2 * attackerTotal) {
-                    attackerPlayers.forEach(p => playerChanges[p.id] -= p.playedCard.stars);
-                    defenderPlayers.forEach(p => playerChanges[p.id] += p.playedCard.stars);
+                    attackerPlayers.forEach((p) => (playerChanges[p.id] -= p.playedCard.stars));
+                    defenderPlayers.forEach((p) => (playerChanges[p.id] += p.playedCard.stars));
                 }
                 else if (defenderTotal === 2 * attackerTotal) {
                 }
                 else {
-                    attackerPlayers.forEach(p => playerChanges[p.id] += p.playedCard.stars);
-                    defenderPlayers.forEach(p => playerChanges[p.id] -= p.playedCard.stars);
+                    attackerPlayers.forEach((p) => (playerChanges[p.id] += p.playedCard.stars));
+                    defenderPlayers.forEach((p) => (playerChanges[p.id] -= p.playedCard.stars));
                 }
             }
         }
-        const remainingPlayers = players.filter(p => !resolvedPlayerIds.has(p.id));
-        const remainingElements = [...new Set(remainingPlayers.map(p => p.playedCard.element))];
+        const remainingPlayers = players.filter((p) => !resolvedPlayerIds.has(p.id));
+        const remainingElements = [
+            ...new Set(remainingPlayers.map((p) => p.playedCard.element)),
+        ];
         if (remainingElements.length > 1) {
             let maxTotal = -1;
             let winnersEls = [];
-            remainingElements.forEach(el => {
+            remainingElements.forEach((el) => {
                 const total = elementTotals[el];
                 if (total > maxTotal) {
                     maxTotal = total;
@@ -269,7 +305,7 @@ let GameService = class GameService {
                 }
             });
             if (winnersEls.length < remainingElements.length) {
-                remainingPlayers.forEach(p => {
+                remainingPlayers.forEach((p) => {
                     const el = p.playedCard.element;
                     if (winnersEls.includes(el)) {
                         playerChanges[p.id] += p.playedCard.stars;
@@ -283,13 +319,13 @@ let GameService = class GameService {
         else if (remainingElements.length === 1 && elementsPresent.length === 1) {
             const allPlayers = players;
             let maxStars = -1;
-            allPlayers.forEach(p => {
+            allPlayers.forEach((p) => {
                 if (p.playedCard.stars > maxStars)
                     maxStars = p.playedCard.stars;
             });
-            const winners = allPlayers.filter(p => p.playedCard.stars === maxStars);
+            const winners = allPlayers.filter((p) => p.playedCard.stars === maxStars);
             if (winners.length < allPlayers.length) {
-                allPlayers.forEach(p => {
+                allPlayers.forEach((p) => {
                     if (p.playedCard.stars === maxStars) {
                         playerChanges[p.id] += p.playedCard.stars;
                     }
@@ -301,7 +337,7 @@ let GameService = class GameService {
         }
         const roundResult = {
             round: room.round,
-            results: players.map(p => {
+            results: players.map((p) => {
                 p.stars += playerChanges[p.id];
                 return {
                     playerId: p.id,
@@ -329,7 +365,7 @@ let GameService = class GameService {
         return this.rooms.get(code.toUpperCase());
     }
     getRoomsList() {
-        return Array.from(this.rooms.values()).map(r => ({
+        return Array.from(this.rooms.values()).map((r) => ({
             code: r.code,
             status: r.status,
             playerCount: Object.keys(r.players).length,
@@ -350,7 +386,7 @@ let GameService = class GameService {
             throw new Error('Target player not found in room');
         }
         delete room.players[targetId];
-        room.turnOrder = room.turnOrder.filter(id => id !== targetId);
+        room.turnOrder = room.turnOrder.filter((id) => id !== targetId);
         this.socketToRoom.delete(targetId);
         if (room.turnOrder[room.currentTurnIndex] === targetId) {
             if (room.currentTurnIndex >= room.turnOrder.length) {
@@ -358,7 +394,8 @@ let GameService = class GameService {
             }
             this.resetTurnTimeout(room);
         }
-        else if (room.currentTurnIndex > 0 && room.currentTurnIndex >= room.turnOrder.length) {
+        else if (room.currentTurnIndex > 0 &&
+            room.currentTurnIndex >= room.turnOrder.length) {
             room.currentTurnIndex = 0;
             this.resetTurnTimeout(room);
         }

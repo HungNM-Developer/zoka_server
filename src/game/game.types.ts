@@ -30,6 +30,8 @@ export interface Player {
   ready: boolean;
   playedCard?: Card;
   hasPlayed: boolean;
+  // Whether the player is currently connected (socket active)
+  connected?: boolean;
 }
 
 export enum RoomStatus {

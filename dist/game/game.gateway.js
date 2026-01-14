@@ -33,7 +33,10 @@ let GameGateway = class GameGateway {
     }
     broadcastRoomUpdate(room) {
         this.server.to(room.code).emit('ROOM_UPDATED', room);
-        if (room.status === game_types_1.RoomStatus.PLAYING && room.round === 1 && room.history.length === 0 && room.currentTurnIndex === 0) {
+        if (room.status === game_types_1.RoomStatus.PLAYING &&
+            room.round === 1 &&
+            room.history.length === 0 &&
+            room.currentTurnIndex === 0) {
             this.server.to(room.code).emit('GAME_STARTED', room);
             this.server.to(room.code).emit('ROUND_STARTED', room);
         }
@@ -53,9 +56,11 @@ let GameGateway = class GameGateway {
     }
     handleDisconnect(client) {
         console.log(`Client disconnected: ${client.id}`);
-        const code = this.gameService.leaveRoom(client.id);
+        const code = this.gameService.markDisconnected(client.id);
         if (code) {
-            this.server.to(code).emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
+            this.server
+                .to(code)
+                .emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
             this.broadcastRoomList();
         }
     }
@@ -116,7 +121,9 @@ let GameGateway = class GameGateway {
         if (code) {
             client.leave(code);
             this.broadcastRoomList();
-            this.server.to(code).emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
+            this.server
+                .to(code)
+                .emit('ROOM_UPDATED', this.gameService.getRoomByCode(code));
         }
     }
     handleKickPlayer(client, data) {
